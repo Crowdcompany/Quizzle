@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crowdcompany Quiz</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .setup-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background-color: #ecf0f1;
+            border-radius: 5px;
+        }
+        .question-container {
+            margin-bottom: 30px;
+        }
+        .question {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 20px;
+            color: #2c3e50;
+        }
+        .options {
+            list-style: none;
+            padding: 0;
+        }
+        .option {
+            margin: 10px 0;
+            padding: 15px;
+            background-color: #ecf0f1;
+            border: 2px solid transparent;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .option:hover {
+            background-color: #d5dbdb;
+            border-color: #3498db;
+        }
+        .option.selected {
+            background-color: #3498db;
+            color: white;
+            border-color: #2980b9;
+        }
+        .option.correct {
+            background-color: #27ae60;
+            color: white;
+            border-color: #229954;
+        }
+        .option.incorrect {
+            background-color: #e74c3c;
+            color: white;
+            border-color: #c0392b;
+        }
+        .feedback {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .feedback.correct {
+            background-color: #d5f4e6;
+            color: #27ae60;
+            border: 1px solid #27ae60;
+        }
+        .feedback.incorrect {
+            background-color: #fadbd8;
+            color: #e74c3c;
+            border: 1px solid #e74c3c;
+        }
+        .button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+            transition: background-color 0.3s ease;
+        }
+        .button:hover {
+            background-color: #2980b9;
+        }
+        .button:disabled {
+            background-color: #bdc3c7;
+            cursor: not-allowed;
+        }
+        .stats {
+            text-align: center;
+            margin: 30px 0;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+        }
+        .progress {
+            margin: 20px 0;
+            text-align: center;
+            color: #7f8c8d;
+        }
+        .loading {
+            text-align: center;
+            color: #3498db;
+            font-style: italic;
+        }
+        .error {
+            color: #e74c3c;
+            background-color: #fadbd8;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        input[type="text"], input[type="file"], textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #bdc3c7;
+            border-radius: 5px;
+            font-size: 14px;
+            margin: 10px 0;
+            box-sizing: border-box;
+        }
+        label {
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Crowdcompany Quiz</h1>
+        
+        <!-- Setup Section -->
+        <div id="setup-section" class="setup-section">
+            <h3>Quiz-Einstellungen</h3>
+            <label for="file-input">Text-Datei hochladen (.txt, .md):</label>
+            <input type="file" id="file-input" accept=".txt,.md" onchange="loadFile()" />
+            
+            <label for="text-input">Text für Quiz-Generierung:</label>
+            <textarea id="text-input" rows="10" placeholder="Laden Sie eine Datei hoch oder fügen Sie hier den Text ein, aus dem Fragen generiert werden sollen..."></textarea>
+            
+            <button class="button" onclick="startQuiz()">Quiz starten</button>
+        </div>
+
+        <!-- Quiz Section -->
+        <div id="quiz-section" class="hidden">
+            <div class="progress">
+                <span id="progress-text">Frage 1 von 10</span>
+            </div>
+            
+            <div class="question-container">
+                <div id="question" class="question"></div>
+                <ul id="options" class="options"></ul>
+                <div id="feedback" class="feedback hidden"></div>
+            </div>
+            
+            <button id="next-button" class="button hidden" onclick="nextQuestion()">Nächste Frage</button>
+        </div>
+
+        <!-- Results Section -->
+        <div id="results-section" class="hidden">
+            <div class="stats">
+                <h3>Quiz beendet!</h3>
+                <p id="results-text"></p>
+                <button class="button" onclick="continueQuiz()">Weiter spielen</button>
+                <button class="button" onclick="restartQuiz()">Neues Quiz</button>
+            </div>
+        </div>
+
+        <!-- Loading -->
+        <div id="loading" class="loading hidden">
+            Generiere Fragen... Bitte warten.
+        </div>
+
+        <!-- Error Display -->
+        <div id="error" class="error hidden"></div>
+    </div>
+
+    <script>
+        // Globale Variablen
+        let masterQuestions = [];
+        let currentQuestions = [];
+        let currentQuestionIndex = 0;
+        let correctAnswers = 0;
+        let incorrectAnswers = 0;
+        let incorrectlyAnsweredQuestions = [];
+        let correctlyAnsweredQuestions = [];
+        
+        let apiKey = '';
+        let textContent = '';
+
+        // Lädt den Marmagen-Text automatisch
+        async function loadDefaultText() {
+            try {
+                const response = await fetch('input/marmagen.txt');
+                if (response.ok) {
+                    const text = await response.text();
+                    document.getElementById('text-input').value = text;
+                }
+            } catch (error) {
+                console.log('Marmagen-Text konnte nicht geladen werden, Benutzer muss Text eingeben');
+            }
+        }
+
+        // Lädt eine hochgeladene Datei
+        function loadFile() {
+            const fileInput = document.getElementById('file-input');
+            const file = fileInput.files[0];
+            
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    document.getElementById('text-input').value = e.target.result;
+                };
+                reader.readAsText(file, 'UTF-8');
+            }
+        }
+
+        // Mischt die Antwortoptionen einer Frage
+        function shuffleQuestionOptions(question) {
+            const correctAnswer = question.options[question.correct_answer_index];
+            const optionsWithIndices = question.options.map((option, index) => ({ option, index }));
+            
+            // Fisher-Yates Shuffle
+            for (let i = optionsWithIndices.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [optionsWithIndices[i], optionsWithIndices[j]] = [optionsWithIndices[j], optionsWithIndices[i]];
+            }
+            
+            const newOptions = [];
+            let newCorrectIndex = 0;
+            
+            optionsWithIndices.forEach((item, newIndex) => {
+                newOptions.push(item.option);
+                if (item.option === correctAnswer) {
+                    newCorrectIndex = newIndex;
+                }
+            });
+            
+            return {
+                ...question,
+                options: newOptions,
+                correct_answer_index: newCorrectIndex
+            };
+        }
+
+        // Generiert Fragen mit OpenAI API
+        async function generateQuestions(text) {
+            showLoading(true);
+            hideError();
+            
+            try {
+                const response = await fetch('https://orproxy.ccpn.us/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+
+                    },
+                    body: JSON.stringify({
+                        model: 'gpt-4o-mini', // Zurück auf gpt4o-mini, da Python damit funktioniert
+                        messages: [
+                            {
+                                role: 'system',
+                                content: 'Generiere Multiple-Choice-Fragen (MCQs) aus dem bereitgestellten Text. Jede Frage sollte 4 Optionen haben, wobei eine die richtige Antwort ist. Gib die Fragen im JSON-Format zurück, wobei jede Frage ein Objekt mit "question", "options" (eine Liste von Strings) und "correct_answer_index" (der 0-basierte Index der richtigen Antwort) ist. WICHTIG: Generiere genau 10 Fragen. Achte darauf, dass die Fragen aktuell und im richtigen zeitlichen Kontext stehen. Verwende Vergangenheitsform für historische Fakten. Fokussiere dich auf geografische, demografische und historische Fakten, die zeitlos gültig sind.'
+                            },
+                            {
+                                role: 'user',
+                                content: text
+                            }
+                        ],
+                        response_format: { type: "json_object" }
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`API-Fehler: ${response.status} ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                const parsedResponse = JSON.parse(data.choices[0].message.content);
+                
+                if (parsedResponse.questions && Array.isArray(parsedResponse.questions)) {
+                    // Mische die Antworten für jede Frage
+                    return parsedResponse.questions.map(question => shuffleQuestionOptions(question));
+                } else {
+                    throw new Error('Unerwartetes Antwortformat von der API');
+                }
+            } catch (error) {
+                showError(`Fehler beim Generieren der Fragen: ${error.message}`);
+                return [];
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // Startet das Quiz
+        async function startQuiz() {
+            textContent = document.getElementById('text-input').value.trim();
+            
+            if (!textContent) {
+                showError('Bitte geben Sie einen Text für die Quiz-Generierung ein oder laden Sie eine Datei hoch.');
+                return;
+            }
+            
+            // Generiere neue Fragen
+            const newQuestions = await generateQuestions(textContent);
+            if (newQuestions.length === 0) {
+              return;
+            }
+            
+            masterQuestions = newQuestions;
+            currentQuestions = masterQuestions.slice();
+            currentQuestions.sort(() => Math.random() - 0.5);
+            currentQuestionIndex = 0;
+            correctAnswers = 0;
+            incorrectAnswers = 0;
+            incorrectlyAnsweredQuestions = [];
+            correctlyAnsweredQuestions = [];
+            
+            showSection('quiz-section');
+            displayQuestion();
+        }
+
+        // Zeigt die aktuelle Frage an
+        function displayQuestion() {
+            if (currentQuestionIndex >= currentQuestions.length) {
+              showResults();
+              return;
+            }
+            
+            const question = currentQuestions[currentQuestionIndex];
+            document.getElementById('progress-text').textContent = 
+                `Frage ${currentQuestionIndex + 1} von ${currentQuestions.length}`;
+            document.getElementById('question').textContent = question.question;
+            
+            const optionsContainer = document.getElementById('options');
+            optionsContainer.innerHTML = '';
+            
+            question.options.forEach((option, index) => {
+                const li = document.createElement('li');
+                li.className = 'option';
+                li.textContent = `${index + 1}. ${option}`;
+                li.onclick = () => selectAnswer(index);
+                optionsContainer.appendChild(li);
+            });
+            
+            document.getElementById('feedback').className = 'feedback hidden';
+            document.getElementById('next-button').className = 'button hidden';
+        }
+
+        // Behandelt die Antwortauswahl
+        function selectAnswer(selectedIndex) {
+            const question = currentQuestions[currentQuestionIndex];
+            const options = document.querySelectorAll('.option');
+            const feedback = document.getElementById('feedback');
+            
+            // Deaktiviere weitere Klicks
+            options.forEach(option => option.onclick = null);
+            
+            // Markiere die ausgewählte Antwort
+            options[selectedIndex].classList.add('selected');
+            
+            // Zeige die richtige Antwort
+            options[question.correct_answer_index].classList.add('correct');
+            
+            if (selectedIndex === question.correct_answer_index) {
+              correctAnswers++;
+              correctlyAnsweredQuestions.push(question);
+              feedback.textContent = 'Richtig! Gut gemacht!';
+              feedback.className = 'feedback correct';
+            } else {
+              incorrectAnswers++;
+              options[selectedIndex].classList.add('incorrect');
+              feedback.textContent = `Leider falsch. Die richtige Antwort war: ${question.options[question.correct_answer_index]}`;
+              feedback.className = 'feedback incorrect';
+              incorrectlyAnsweredQuestions.push(question);
+            }
+            
+            document.getElementById('next-button').className = 'button';
+        }
+
+        // Geht zur nächsten Frage
+        function nextQuestion() {
+            currentQuestionIndex++;
+            displayQuestion();
+        }
+
+        // Zeigt die Ergebnisse an
+        function showResults() {
+            document.getElementById('results-text').innerHTML = 
+                `Sie haben <strong>${correctAnswers}</strong> Fragen richtig beantwortet.<br>
+                 Sie haben <strong>${incorrectAnswers}</strong> Fragen falsch beantwortet.`;
+            showSection('results-section');
+        }
+
+        // Setzt das Quiz mit falsch beantworteten Fragen fort
+        async function continueQuiz() {
+          // Entferne richtig beantwortete Fragen aus masterQuestions
+          masterQuestions = masterQuestions.filter(q => !correctlyAnsweredQuestions.includes(q));
+          
+          // Überprüfe ob neue Fragen generiert werden müssen
+          const total = masterQuestions.length + incorrectlyAnsweredQuestions.length;
+          if (total < 5) {
+            showLoading(true);
+            const newQuestions = await generateQuestions(textContent);
+            showLoading(false);
+            
+            if (newQuestions.length > 0) {
+              masterQuestions = masterQuestions.concat(newQuestions);
+            }
+          }
+          
+          // Leere die Listen
+          incorrectlyAnsweredQuestions = [];
+          correctlyAnsweredQuestions = [];
+          
+          // Richte nächste Runde ein
+          currentQuestions = masterQuestions.slice();
+          currentQuestions.sort(() => Math.random() - 0.5);
+          
+          currentQuestionIndex = 0;
+          correctAnswers = 0;
+          incorrectAnswers = 0;
+          
+          showSection('quiz-section');
+          displayQuestion();
+        }
+
+        // Startet ein komplett neues Quiz
+        function restartQuiz() {
+            showSection('setup-section');
+        }
+
+        // Hilfsfunktionen für UI
+        function showSection(sectionId) {
+            const sections = ['setup-section', 'quiz-section', 'results-section'];
+            sections.forEach(id => {
+                document.getElementById(id).className = id === sectionId ? '' : 'hidden';
+            });
+        }
+
+        function showLoading(show) {
+            document.getElementById('loading').className = show ? 'loading' : 'loading hidden';
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.className = 'error';
+        }
+
+        function hideError() {
+            document.getElementById('error').className = 'error hidden';
+        }
+
+        // Initialisierung beim Laden der Seite
+        window.onload = function() {
+            loadDefaultText();
+        };
+    </script>
+</body>
+</html>
