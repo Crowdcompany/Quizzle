@@ -144,6 +144,17 @@
         .hidden {
             display: none;
         }
+       .original-text-container {
+           background-color: #f8f9fa;
+           border: 1px solid #e9ecef;
+           padding: 15px;
+           border-radius: 5px;
+           margin-top: 20px;
+           white-space: pre-wrap; /* Behält Zeilenumbrüche und Leerzeichen bei */
+           font-family: monospace;
+           max-height: 300px;
+           overflow-y: auto;
+       }
     </style>
 </head>
 <body>
@@ -156,9 +167,19 @@
             <label for="file-input">Text-Datei hochladen (.txt, .md):</label>
             <input type="file" id="file-input" accept=".txt,.md" onchange="loadFile()" />
             
+            <label for="research-input">Thema recherchieren:</label>
+            <input type="text" id="research-input" placeholder="Geben Sie ein Thema ein..." />
+            <button class="button" onclick="doResearch()">Recherchieren</button>
+            
             <label for="text-input">Text für Quiz-Generierung:</label>
             <textarea id="text-input" rows="10" placeholder="Laden Sie eine Datei hoch oder fügen Sie hier den Text ein, aus dem Fragen generiert werden sollen..."></textarea>
             
+            <label for="num-questions-input">Anzahl der Fragen:</label>
+            <input type="number" id="num-questions-input" value="10" min="1" max="50">
+
+            <label for="difficulty-input">Schwierigkeitsgrad (1-100%):</label>
+            <input type="number" id="difficulty-input" value="50" min="1" max="100">
+
             <button class="button" onclick="startQuiz()">Quiz starten</button>
         </div>
 
@@ -175,6 +196,8 @@
             </div>
             
             <button id="next-button" class="button hidden" onclick="nextQuestion()">Nächste Frage</button>
+            <button class="button" onclick="toggleOriginalText()">Originaltext anzeigen/verbergen</button>
+            <div id="original-text-container" class="original-text-container hidden"></div>
         </div>
 
         <!-- Results Section -->
@@ -189,7 +212,7 @@
 
         <!-- Loading -->
         <div id="loading" class="loading hidden">
-            Generiere Fragen... Bitte warten.
+            <span id="loading-text">Generiere Fragen... Bitte warten.</span>
         </div>
 
         <!-- Error Display -->
@@ -235,6 +258,59 @@
                 reader.readAsText(file, 'UTF-8');
             }
         }
+        
+        // Führt eine Online-Recherche durch und fügt das Ergebnis in die Textarea ein
+        async function doResearch() {
+            const input = document.getElementById('research-input').value.trim();
+            if (!input) {
+                showError('Bitte geben Sie ein Thema ein.');
+                return;
+            }
+            
+            showLoading(true, 'Recherchiere Thema...');
+            hideError();
+            
+            try {
+                const response = await fetch('https://orproxy.crowdcompany.online/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        model: 'perplexity/sonar',
+                        messages: [
+                            {
+                                role: 'system',
+                                content: 'Führe eine gründliche Recherche zu dem folgenden Thema durch und fasse die Ergebnisse als zusammenhängenden, gut lesbaren Text zusammen. Der Text sollte als Grundlage für ein Quiz dienen.'
+                            },
+                            {
+                                role: 'user',
+                                content: input
+                            }
+                        ]
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`API-Fehler bei der Recherche: ${response.status} ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                const researchText = data.choices[0].message.content;
+                
+                if (!researchText || researchText.trim() === '') {
+                    throw new Error('Die Recherche hat keinen verwertbaren Text zurückgegeben.');
+                }
+                document.getElementById('text-input').value = researchText;
+
+                // Starte das Quiz automatisch nach erfolgreicher Recherche
+                await startQuiz();
+                
+            } catch (error) {
+                showError(`Recherche-Fehler: ${error.message}`);
+                showLoading(false);
+            }
+        }
 
         // Mischt die Antwortoptionen einer Frage
         function shuffleQuestionOptions(question) {
@@ -264,47 +340,126 @@
             };
         }
 
-        // Generiert Fragen mit OpenAI API
-        async function generateQuestions(text) {
-            showLoading(true);
-            hideError();
-            
+        // Teilt Text in Chunks auf
+        function splitTextIntoChunks(text, chunkSize = 15000) {
+            const chunks = [];
+            for (let i = 0; i < text.length; i += chunkSize) {
+                chunks.push(text.substring(i, i + chunkSize));
+            }
+            return chunks;
+        }
+
+        // Bereinigt einen JSON-String, um häufige Fehler zu beheben
+        function sanitizeAndParseJson(jsonString) {
             try {
-                const response = await fetch('https://orproxy.ccpn.us/v1/chat/completions', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
+                // Erster Versuch, direkt zu parsen
+                return JSON.parse(jsonString);
+            } catch (e) {
+                console.warn("JSON-Parsing-Fehler, versuche Bereinigung:", e.message);
+                // Ersetzt ungültige Escapesequenzen, die nicht Teil einer gültigen Sequenz sind.
+                const sanitizedString = jsonString.replace(/\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})/g, '\\\\');
+                try {
+                    return JSON.parse(sanitizedString);
+                } catch (e2) {
+                     console.error("Endgültiges Parsen nach Bereinigung fehlgeschlagen:", e2.message);
+                     // Wirft den ursprünglichen Fehler, da er informativer sein könnte.
+                     throw new Error(`Fehler beim Parsen der API-Antwort: ${e.message}`);
+                }
+            }
+        }
 
-                    },
-                    body: JSON.stringify({
-                        model: 'gpt-4o-mini', // Zurück auf gpt4o-mini, da Python damit funktioniert
-                        messages: [
-                            {
-                                role: 'system',
-                                content: 'Generiere Multiple-Choice-Fragen (MCQs) aus dem bereitgestellten Text. Jede Frage sollte 4 Optionen haben, wobei eine die richtige Antwort ist. Gib die Fragen im JSON-Format zurück, wobei jede Frage ein Objekt mit "question", "options" (eine Liste von Strings) und "correct_answer_index" (der 0-basierte Index der richtigen Antwort) ist. WICHTIG: Generiere genau 10 Fragen. Achte darauf, dass die Fragen aktuell und im richtigen zeitlichen Kontext stehen. Verwende Vergangenheitsform für historische Fakten. Fokussiere dich auf geografische, demografische und historische Fakten, die zeitlos gültig sind.'
-                            },
-                            {
-                                role: 'user',
-                                content: text
+        function getDifficultyDescription(level) {
+            if (level <= 20) return "sehr einfache Fragen für absolute Anfänger, die nur grundlegendste Fakten abfragen";
+            if (level <= 60) return "Fragen für Personen mit solidem Grundwissen zum Thema";
+            if (level <= 80) return "schwierige Fragen für fortgeschrittene Kenner, die auch Details umfassen";
+            return "sehr schwierige Expertenfragen zu spezifischen Details, Nuancen und weniger bekannten Fakten";
+        }
+
+        // Generiert Fragen mit OpenAI API durch Aufteilen großer Texte
+        async function generateQuestions(text) {
+            hideError();
+            const numQuestionsTotal = parseInt(document.getElementById('num-questions-input').value);
+            const difficultyValue = document.getElementById('difficulty-input').value;
+            const difficultyDescription = getDifficultyDescription(difficultyValue);
+
+            const textChunks = splitTextIntoChunks(text);
+            const numChunks = textChunks.length;
+            let allQuestions = [];
+
+            showLoading(true, `Teile Text in ${numChunks} Blöcke auf...`);
+
+            try {
+                for (let i = 0; i < numChunks; i++) {
+                    const chunk = textChunks[i];
+                    const numQuestionsForChunk = Math.ceil(numQuestionsTotal / numChunks);
+                    
+                    showLoading(true, `Generiere Fragen aus Block ${i + 1} von ${numChunks}...`);
+
+                    const response = await fetch('https://orproxy.crowdcompany.online/v1/chat/completions', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            model: 'google/gemini-2.0-flash-001',
+                            messages: [
+                                {
+                                    role: 'system',
+                                    content: `Generiere Multiple-Choice-Fragen (MCQs) aus dem bereitgestellten Text. Jede Frage sollte 4 Optionen haben, wobei eine die richtige Antwort ist. Gib die Fragen im JSON-Format zurück, wobei jede Frage ein Objekt mit "question", "options" (eine Liste von Strings) und "correct_answer_index" (der 0-basierte Index der richtigen Antwort) ist. WICHTIG: Generiere ungefähr ${numQuestionsForChunk} Fragen. Der Schwierigkeitsgrad der Fragen sollte dem folgenden Niveau entsprechen: "${difficultyDescription}". Achte darauf, dass die Fragen aktuell und im richtigen zeitlichen Kontext stehen. Verwende Vergangenheitsform für historische Fakten.`
+                                },
+                                {
+                                    role: 'user',
+                                    content: chunk
+                                }
+                            ],
+                            response_format: { type: "json_object" }
+                        })
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`API-Fehler bei Block ${i + 1}: ${response.status} ${response.statusText}`);
+                    }
+
+                    const data = await response.json();
+                    console.log(`Antwort von Block ${i + 1}:`, data); // Detailliertes Logging
+                    
+                    if (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) {
+                        try {
+                            const parsedResponse = sanitizeAndParseJson(data.choices[0].message.content);
+                            let questionsArray = [];
+                            
+                            if (Array.isArray(parsedResponse)) {
+                               // Fall 1: Die API liefert direkt ein Array
+                               questionsArray = parsedResponse;
+                            } else if (parsedResponse.questions) {
+                               // Fall 2: Die API liefert ein Objekt mit einem 'questions'-Feld
+                               if (Array.isArray(parsedResponse.questions)) {
+                                   // ...das ein Array ist
+                                   questionsArray = parsedResponse.questions;
+                               } else if (typeof parsedResponse.questions === 'object' && parsedResponse.questions !== null) {
+                                   // ...das ein Objekt ist
+                                   questionsArray = Object.values(parsedResponse.questions);
+                               }
                             }
-                        ],
-                        response_format: { type: "json_object" }
-                    })
-                });
 
-                if (!response.ok) {
-                    throw new Error(`API-Fehler: ${response.status} ${response.statusText}`);
+                            if (questionsArray.length > 0) {
+                                const chunkQuestions = questionsArray.map(q => shuffleQuestionOptions(q));
+                                console.log(`Erfolgreich ${chunkQuestions.length} Fragen aus Block ${i + 1} extrahiert.`);
+                                allQuestions = allQuestions.concat(chunkQuestions);
+                            } else {
+                               console.warn(`Konnte keine Fragen aus Block ${i + 1} extrahieren, da das Format unerwartet war oder keine Fragen enthalten waren.`, parsedResponse);
+                            }
+                        } catch (e) {
+                            console.error(`Fehler beim Verarbeiten der Antwort von Block ${i + 1}:`, e);
+                        }
+                    } else {
+                       console.warn(`Keine gültigen 'choices' in der Antwort von Block ${i+1} gefunden.`);
+                    }
                 }
 
-                const data = await response.json();
-                const parsedResponse = JSON.parse(data.choices[0].message.content);
-                
-                if (parsedResponse.questions && Array.isArray(parsedResponse.questions)) {
-                    // Mische die Antworten für jede Frage
-                    return parsedResponse.questions.map(question => shuffleQuestionOptions(question));
-                } else {
-                    throw new Error('Unerwartetes Antwortformat von der API');
-                }
+                console.log(`Insgesamt ${allQuestions.length} Fragen generiert.`);
+                return allQuestions;
+
             } catch (error) {
                 showError(`Fehler beim Generieren der Fragen: ${error.message}`);
                 return [];
@@ -325,10 +480,13 @@
             // Generiere neue Fragen
             const newQuestions = await generateQuestions(textContent);
             if (newQuestions.length === 0) {
+              showError('Es konnten keine Fragen aus dem Text generiert werden. Die API hat möglicherweise keine gültigen Fragen zurückgegeben oder der Text war ungeeignet.');
               return;
             }
             
-            masterQuestions = newQuestions;
+            // Kürze die Fragenliste auf die vom Benutzer gewünschte Anzahl
+            masterQuestions = newQuestions.slice(0, document.getElementById('num-questions-input').value);
+            
             currentQuestions = masterQuestions.slice();
             currentQuestions.sort(() => Math.random() - 0.5);
             currentQuestionIndex = 0;
@@ -340,6 +498,11 @@
             showSection('quiz-section');
             displayQuestion();
         }
+
+       function toggleOriginalText() {
+           const container = document.getElementById('original-text-container');
+           container.classList.toggle('hidden');
+       }
 
         // Zeigt die aktuelle Frage an
         function displayQuestion() {
@@ -366,6 +529,8 @@
             
             document.getElementById('feedback').className = 'feedback hidden';
             document.getElementById('next-button').className = 'button hidden';
+           document.getElementById('original-text-container').innerHTML = `<pre>${textContent}</pre>`;
+           document.getElementById('original-text-container').classList.add('hidden'); // Standardmäßig ausblenden
         }
 
         // Behandelt die Antwortauswahl
@@ -459,8 +624,11 @@
             });
         }
 
-        function showLoading(show) {
-            document.getElementById('loading').className = show ? 'loading' : 'loading hidden';
+        function showLoading(show, message = 'Generiere Fragen... Bitte warten.') {
+            const loadingDiv = document.getElementById('loading');
+            const loadingText = document.getElementById('loading-text');
+            loadingText.textContent = message;
+            loadingDiv.className = show ? 'loading' : 'loading hidden';
         }
 
         function showError(message) {
